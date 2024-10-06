@@ -1,21 +1,17 @@
-const updateMultipleItems = (array, updates) => {
+const updateItems = (array, outerKey, subSectionKey, updates) => {
   return array.map(outerObj => {
-    // Check if the outer object's key matches any of the updates
-    const matchedUpdates = updates.filter(update => update.outerKey === outerObj.key);
-    
-    if (matchedUpdates.length > 0) {
+    // Check if the outer object's key matches the constant outer key
+    if (outerObj.key === outerKey) {
       return {
         ...outerObj,
         subSection: outerObj.subSection.map(subObj => {
-          // Check if the subSection object's key matches any of the updates
-          const subSectionUpdates = matchedUpdates.filter(update => update.subSectionKey === subObj.key);
-
-          if (subSectionUpdates.length > 0) {
+          // Check if the subSection object's key matches the constant subSection key
+          if (subObj.key === subSectionKey) {
             return {
               ...subObj,
               items: subObj.items.map(itemObj => {
-                // Check if the current item matches any of the updates
-                const updateForItem = subSectionUpdates.find(update => update.targetItemKey === itemObj.key);
+                // Check if the current item's key matches any of the target keys in updates
+                const updateForItem = updates.find(update => update.targetItemKey === itemObj.key);
                 
                 // If a match is found, update the data property
                 return updateForItem ? { ...itemObj, data: updateForItem.newData } : itemObj;
@@ -30,11 +26,13 @@ const updateMultipleItems = (array, updates) => {
   });
 };
 
-// Example usage: Update multiple items
+// Example usage: Update multiple items for constant outerKey and subKey
+const outerKey = 'outerKey1';
+const subSectionKey = 'subKey1';
 const updates = [
-  { outerKey: 'outerKey1', subSectionKey: 'subKey1', targetItemKey: 'targetKey1', newData: 'newValue1' },
-  { outerKey: 'outerKey2', subSectionKey: 'subKey2', targetItemKey: 'targetKey2', newData: 'newValue2' },
+  { targetItemKey: 'targetKey1', newData: 'newValue1' },
+  { targetItemKey: 'targetKey2', newData: 'newValue2' },
 ];
 
-const updatedData = updateMultipleItems(data, updates);
+const updatedData = updateItems(data, outerKey, subSectionKey, updates);
 console.log(updatedData);
