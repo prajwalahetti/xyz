@@ -46,7 +46,8 @@ def classify_records(group):
     consecutive_streak = (consecutive_weeks.groupby((consecutive_weeks != 1).cumsum()).cumsum() == 7).any()
 
     if consecutive_streak:
-        return 'daily', daily_weeks, len(daily_weeks), calculate_mean_std_daily(daily_weeks['timestamp']), ', '.join(daily_weeks['timestamp'].astype(str))
+        mean_time, std_dev = calculate_mean_std_daily(daily_weeks['timestamp'])
+        return 'daily', daily_weeks, len(daily_weeks), mean_time, std_dev, ', '.join(daily_weeks['timestamp'].astype(str))
 
     # Check weekly condition: At least once per week for 9 consecutive weeks
     weekly_group = group.groupby('week').filter(lambda x: len(x) >= 1)
@@ -56,7 +57,8 @@ def classify_records(group):
     consecutive_streak = (consecutive_weeks.groupby((consecutive_weeks != 1).cumsum()).cumsum() == 9).any()
 
     if consecutive_streak:
-        return 'weekly', weekly_group, len(weekly_group), calculate_mean_std(weekly_group['timestamp']), ', '.join(weekly_group['timestamp'].astype(str))
+        mean_time, std_dev = calculate_mean_std(weekly_group['timestamp'])
+        return 'weekly', weekly_group, len(weekly_group), mean_time, std_dev, ', '.join(weekly_group['timestamp'].astype(str))
 
     # Check monthly condition: At least once per month for 3 consecutive months
     monthly_group = group.groupby([group['timestamp'].dt.year, group['timestamp'].dt.month]).filter(lambda x: len(x) >= 1)
@@ -66,9 +68,10 @@ def classify_records(group):
     consecutive_streak = (consecutive_months.groupby((consecutive_months != 1).cumsum()).cumsum() == 3).any()
 
     if consecutive_streak:
-        return 'monthly', monthly_group, len(monthly_group), calculate_mean_std(monthly_group['timestamp']), ', '.join(monthly_group['timestamp'].astype(str))
+        mean_time, std_dev = calculate_mean_std(monthly_group['timestamp'])
+        return 'monthly', monthly_group, len(monthly_group), mean_time, std_dev, ', '.join(monthly_group['timestamp'].astype(str))
 
-    return None, None, 0, (pd.NaT, pd.NaT), ''
+    return None, None, 0, pd.NaT, pd.NaT, ''
 
 # Initialize list to collect result data
 results = []
@@ -76,7 +79,7 @@ results = []
 # Group data by 'Name' to calculate stats for each person
 for name, group in df.groupby('Name'):
     group = group.sort_values('timestamp')
-    record_type, valid_group, frequency, (mean_time, std_dev), timestamps_considered = classify_records(group)
+    record_type, valid_group, frequency, mean_time, std_dev, timestamps_considered = classify_records(group)
     
     if record_type:
         results.append({
