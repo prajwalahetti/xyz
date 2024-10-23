@@ -71,6 +71,7 @@ def classify_records(group):
         mean_time, std_dev = calculate_mean_std(monthly_group['timestamp'])
         return 'monthly', monthly_group, len(monthly_group), mean_time, std_dev, ', '.join(monthly_group['timestamp'].astype(str))
 
+    # If no classification, return default values
     return None, None, 0, pd.NaT, pd.NaT, ''
 
 # Initialize list to collect result data
@@ -79,17 +80,21 @@ results = []
 # Group data by 'Name' to calculate stats for each person
 for name, group in df.groupby('Name'):
     group = group.sort_values('timestamp')
+    
+    # Unpack the return from classify_records, ensuring default values are handled
     record_type, valid_group, frequency, mean_time, std_dev, timestamps_considered = classify_records(group)
     
+    # If a classification was made, append those results
     if record_type:
         results.append({
             'Name': name,
             'Frequency': frequency,
             'Type': record_type,
-            'Mean Time': mean_time,
-            'Standard Deviation': std_dev,
+            'Mean Time': mean_time if pd.notna(mean_time) else '',
+            'Standard Deviation': std_dev if pd.notna(std_dev) else '',
             'Timestamps Considered': timestamps_considered
         })
+    # If no classification, append the individual timestamps
     else:
         for ts in group['timestamp']:
             results.append({
