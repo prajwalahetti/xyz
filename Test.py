@@ -6,68 +6,79 @@ df = pd.read_csv('your_file.csv')
 # Convert the 'timestamp' column to datetime format
 df['timestamp'] = pd.to_datetime(df['timestamp'])
 
-# Function to calculate mean and standard deviation of time differences for daily records (based on hours and minutes only)
+# Function to round timedelta to minutes
+def round_to_minutes(timedelta_obj):
+    if pd.isna(timedelta_obj):
+        return pd.NaT
+    total_minutes = int(round(timedelta_obj.total_seconds() / 60))
+    return pd.to_timedelta(total_minutes, unit='m')
+
+# Function to calculate mean and standard deviation for daily records based on hours and minutes only
 def calculate_mean_std_daily(time_series):
-    # Extract hours and minutes from the timestamps
-    times_only = time_series.dt.hour * 60 + time_series.dt.minute  # Convert time to total minutes in a day
-    
-    # Calculate the time differences
-    time_diffs = times_only.diff().dropna()  # Differences in minutes between times
-    mean_time = time_diffs.mean()  # Mean of the time differences (in minutes)
-    std_dev = time_diffs.std()  # Standard deviation of time differences (in minutes)
-    
-    # Convert mean and std dev from minutes to a timedelta object for easier interpretation
+    times_only = time_series.dt.hour * 60 + time_series.dt.minute
+    time_diffs = times_only.diff().dropna()
+    mean_time = time_diffs.mean()
+    std_dev = time_diffs.std()
     mean_timedelta = pd.to_timedelta(mean_time, unit='m') if pd.notna(mean_time) else pd.NaT
     std_dev_timedelta = pd.to_timedelta(std_dev, unit='m') if pd.notna(std_dev) else pd.NaT
-    return mean_timedelta, std_dev_timedelta
+    return round_to_minutes(mean_timedelta), round_to_minutes(std_dev_timedelta)
 
-# Function to find mean and standard deviation of time differences for general series
+# Function to calculate mean and standard deviation for general records
 def calculate_mean_std(time_series):
-    time_diffs = time_series.diff().dropna()  # Calculate time differences
-    mean_time = time_diffs.mean()  # Mean of the time differences
-    std_dev = time_diffs.std()  # Standard deviation of the time differences
-    return mean_time, std_dev
+    time_diffs = time_series.diff().dropna()
+    mean_time = time_diffs.mean()
+    std_dev = time_diffs.std()
+    mean_timedelta = pd.to_timedelta(mean_time) if pd.notna(mean_time) else pd.NaT
+    std_dev_timedelta = pd.to_timedelta(std_dev) if pd.notna(std_dev) else pd.NaT
+    return round_to_minutes(mean_timedelta), round_to_minutes(std_dev_timedelta)
 
-# Function to classify records into daily, weekly, or monthly, ensuring exclusivity
+# Function to classify daily, weekly, or monthly
 def classify_records(group):
-    # Extract only the hour and minute for daily consideration
-    group['time_only'] = group['timestamp'].dt.time
+    group['week'] = group['timestamp'].dt.isocalendar().week
+    group['day_of_week'] = group['timestamp'].dt.dayofweek  # Monday=0, Sunday=6
     
-    # Check if the group fits the daily pattern (at least 5 days with the same time)
-    daily_group = group.groupby([group['timestamp'].dt.date, 'time_only']).filter(lambda x: len(x) >= 5)
+    # Check daily condition: 5/7 days for 7 consecutive weeks
+    daily_weeks = group.groupby('week').filter(lambda x: x['day_of_week'].nunique() >= 5)
+    weekly_series = daily_weeks.groupby('week').size()
     
-    if len(daily_group) > 0:
-        # Use daily-specific function for mean and std dev based on hours and minutes
-        return 'daily', daily_group, len(daily_group), calculate_mean_std_daily(daily_group['timestamp']), ', '.join(daily_group['timestamp'].astype(str))
+    # Check if we have 7 consecutive weeks with daily records
+    consecutive_weeks = (weekly_series.index.to_series().diff().fillna(1) == 1).astype(int)
+    consecutive_streak = (consecutive_weeks.groupby((consecutive_weeks != 1).cumsum()).cumsum() == 7).any()
 
-    # Check if the group fits the weekly pattern (at least 1 occurrence per week)
-    weekly_group = group.groupby(group['timestamp'].dt.isocalendar().week).filter(lambda x: len(x) >= 1)
+    if consecutive_streak:
+        return 'daily', daily_weeks, len(daily_weeks), calculate_mean_std_daily(daily_weeks['timestamp']), ', '.join(daily_weeks['timestamp'].astype(str))
+
+    # Check weekly condition: At least once per week for 9 consecutive weeks
+    weekly_group = group.groupby('week').filter(lambda x: len(x) >= 1)
+    weekly_series = weekly_group.groupby('week').size()
     
-    if len(weekly_group) > 0:
+    consecutive_weeks = (weekly_series.index.to_series().diff().fillna(1) == 1).astype(int)
+    consecutive_streak = (consecutive_weeks.groupby((consecutive_weeks != 1).cumsum()).cumsum() == 9).any()
+
+    if consecutive_streak:
         return 'weekly', weekly_group, len(weekly_group), calculate_mean_std(weekly_group['timestamp']), ', '.join(weekly_group['timestamp'].astype(str))
 
-    # Check if the group fits the monthly pattern (at least 1 occurrence per month)
+    # Check monthly condition: At least once per month for 3 consecutive months
     monthly_group = group.groupby([group['timestamp'].dt.year, group['timestamp'].dt.month]).filter(lambda x: len(x) >= 1)
+    monthly_series = monthly_group.groupby([group['timestamp'].dt.year, group['timestamp'].dt.month]).size()
     
-    if len(monthly_group) > 0:
+    consecutive_months = (monthly_series.index.to_series().diff().fillna(1) == 1).astype(int)
+    consecutive_streak = (consecutive_months.groupby((consecutive_months != 1).cumsum()).cumsum() == 3).any()
+
+    if consecutive_streak:
         return 'monthly', monthly_group, len(monthly_group), calculate_mean_std(monthly_group['timestamp']), ', '.join(monthly_group['timestamp'].astype(str))
 
-    return None, None, 0, (pd.NaT, pd.NaT), ''  # No classification if no group matches
+    return None, None, 0, (pd.NaT, pd.NaT), ''
 
-# Initialize lists to collect result data and unclassified records
+# Initialize list to collect result data
 results = []
-unclassified_records = []
 
 # Group data by 'Name' to calculate stats for each person
 for name, group in df.groupby('Name'):
-    # Sort by timestamp for proper time difference calculations
     group = group.sort_values('timestamp')
-    
-    # Classify records into daily, weekly, or monthly
     record_type, valid_group, frequency, (mean_time, std_dev), timestamps_considered = classify_records(group)
     
     if record_type:
-        # Append classified result for each name
         results.append({
             'Name': name,
             'Frequency': frequency,
@@ -77,23 +88,19 @@ for name, group in df.groupby('Name'):
             'Timestamps Considered': timestamps_considered
         })
     else:
-        # If no classification, add to unclassified records
         for ts in group['timestamp']:
-            unclassified_records.append({
+            results.append({
                 'Name': name,
-                'Timestamp': ts
+                'Frequency': None,
+                'Type': None,
+                'Mean Time': None,
+                'Standard Deviation': None,
+                'Timestamps Considered': ts
             })
 
-# Create DataFrames for classified results and unclassified records
+# Create DataFrame and export to CSV
 results_df = pd.DataFrame(results)
-unclassified_df = pd.DataFrame(unclassified_records)
+results_df.to_csv('output_with_classifications.csv', index=False)
 
-# Export the results to CSV files
-results_df.to_csv('classified_output.csv', index=False)
-unclassified_df.to_csv('unclassified_output.csv', index=False)
-
-# Print the DataFrames to verify the results
-print("Classified Records:")
+# Print results
 print(results_df)
-print("\nUnclassified Records:")
-print(unclassified_df)
