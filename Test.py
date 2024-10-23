@@ -19,8 +19,14 @@ def calculate_mean_std_daily(time_series):
     time_diffs = times_only.diff().dropna()
     mean_time = time_diffs.mean()
     std_dev = time_diffs.std()
-    mean_timedelta = pd.to_timedelta(mean_time, unit='m') if pd.notna(mean_time) else pd.NaT
-    std_dev_timedelta = pd.to_timedelta(std_dev, unit='m') if pd.notna(std_dev) else pd.NaT
+    if pd.notna(mean_time):
+        mean_timedelta = pd.to_timedelta(mean_time, unit='m')
+    else:
+        mean_timedelta = pd.NaT
+    if pd.notna(std_dev):
+        std_dev_timedelta = pd.to_timedelta(std_dev, unit='m')
+    else:
+        std_dev_timedelta = pd.NaT
     return round_to_minutes(mean_timedelta), round_to_minutes(std_dev_timedelta)
 
 # Function to calculate mean and standard deviation for general records
@@ -28,8 +34,14 @@ def calculate_mean_std(time_series):
     time_diffs = time_series.diff().dropna()
     mean_time = time_diffs.mean()
     std_dev = time_diffs.std()
-    mean_timedelta = pd.to_timedelta(mean_time) if pd.notna(mean_time) else pd.NaT
-    std_dev_timedelta = pd.to_timedelta(std_dev) if pd.notna(std_dev) else pd.NaT
+    if pd.notna(mean_time):
+        mean_timedelta = pd.to_timedelta(mean_time)
+    else:
+        mean_timedelta = pd.NaT
+    if pd.notna(std_dev):
+        std_dev_timedelta = pd.to_timedelta(std_dev)
+    else:
+        std_dev_timedelta = pd.NaT
     return round_to_minutes(mean_timedelta), round_to_minutes(std_dev_timedelta)
 
 # Function to classify daily, weekly, or monthly
@@ -71,8 +83,7 @@ def classify_records(group):
         mean_time, std_dev = calculate_mean_std(monthly_group['timestamp'])
         return 'monthly', monthly_group, len(monthly_group), mean_time, std_dev, ', '.join(monthly_group['timestamp'].astype(str))
 
-    # If no classification, return default values
-    return None, None, 0, pd.NaT, pd.NaT, ''
+    return None, None, 0, pd.NaT, pd.NaT, ''  # Default return for unclassified records
 
 # Initialize list to collect result data
 results = []
@@ -81,10 +92,10 @@ results = []
 for name, group in df.groupby('Name'):
     group = group.sort_values('timestamp')
     
-    # Unpack the return from classify_records, ensuring default values are handled
+    # Ensure classify_records returns proper values, even if no classification occurs
     record_type, valid_group, frequency, mean_time, std_dev, timestamps_considered = classify_records(group)
     
-    # If a classification was made, append those results
+    # Append classified data
     if record_type:
         results.append({
             'Name': name,
@@ -94,7 +105,7 @@ for name, group in df.groupby('Name'):
             'Standard Deviation': std_dev if pd.notna(std_dev) else '',
             'Timestamps Considered': timestamps_considered
         })
-    # If no classification, append the individual timestamps
+    # Append unclassified data
     else:
         for ts in group['timestamp']:
             results.append({
