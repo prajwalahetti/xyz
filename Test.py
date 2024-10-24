@@ -17,46 +17,39 @@ df = pd.read_csv('your_file.csv')
 logging.info("Converting 'timestamp' column to datetime format.")
 df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')  # Use 'coerce' to handle invalid dates
 
-# Function to calculate mean and standard deviation for daily records based on hours and minutes only
-def calculate_mean_std_daily(time_series):
-    logging.info("Calculating mean and standard deviation for daily records.")
+# Function to calculate mean and standard deviation for days of the week (for weekly)
+def calculate_mean_std_weekly(time_series):
+    logging.info("Calculating mean and standard deviation for weekly records (day of the week).")
+    
+    # Extract day of the week (Monday=0, Sunday=6)
+    day_of_week = time_series.dt.dayofweek
 
-    # Extract hours and minutes
-    total_minutes = time_series.dt.hour * 60 + time_series.dt.minute
-
-    if total_minutes.empty:
-        logging.warning("No total minutes available for daily calculation.")
+    if day_of_week.empty:
+        logging.warning("No days of the week available for weekly calculation.")
         return np.nan, np.nan
 
-    # Calculate mean and standard deviation
-    mean_time = total_minutes.mean()
-    std_dev = total_minutes.std()
+    # Calculate mean and standard deviation based on day of the week
+    mean_day = day_of_week.mean()
+    std_dev_day = day_of_week.std()
 
-    # Convert mean and std deviation back to timedelta format
-    mean_timedelta = pd.to_timedelta(mean_time, unit='m')
-    std_dev_timedelta = pd.to_timedelta(std_dev, unit='m')
+    return round(mean_day, 2), round(std_dev_day, 2)
 
-    return round_to_minutes(mean_timedelta), round_to_minutes(std_dev_timedelta)
+# Function to calculate mean and standard deviation for weeks of the month (for monthly)
+def calculate_mean_std_monthly(time_series):
+    logging.info("Calculating mean and standard deviation for monthly records (week of the month).")
 
-# Function to round timedelta to the nearest minute
-def round_to_minutes(timedelta_obj):
-    if pd.isna(timedelta_obj):
-        return np.nan
-    total_minutes = int(round(timedelta_obj.total_seconds() / 60))
-    return pd.to_timedelta(total_minutes, unit='m')
+    # Extract week of the month (1st, 2nd, etc.)
+    week_of_month = (time_series.dt.day - 1) // 7 + 1
 
-# Function to calculate mean and standard deviation for general records
-def calculate_mean_std(time_series):
-    logging.info("Calculating mean and standard deviation for general records.")
-    time_diffs = time_series.diff().dropna()
-    if time_diffs.empty:
-        logging.warning("No time differences available for general calculation.")
+    if week_of_month.empty:
+        logging.warning("No weeks of the month available for monthly calculation.")
         return np.nan, np.nan
-    mean_time = time_diffs.mean()
-    std_dev = time_diffs.std()
-    mean_timedelta = pd.to_timedelta(mean_time) if pd.notna(mean_time) else np.nan
-    std_dev_timedelta = pd.to_timedelta(std_dev) if pd.notna(std_dev) else np.nan
-    return round_to_minutes(mean_timedelta), round_to_minutes(std_dev_timedelta)
+
+    # Calculate mean and standard deviation based on the week of the month
+    mean_week = week_of_month.mean()
+    std_dev_week = week_of_month.std()
+
+    return round(mean_week, 2), round(std_dev_week, 2)
 
 # Function to classify daily, weekly, or monthly
 def classify_records(group):
@@ -74,16 +67,16 @@ def classify_records(group):
     # Check weekly condition: At least once per week for 9 consecutive weeks
     weekly_group = group.groupby('week').filter(lambda x: len(x) >= 1)
     if len(weekly_group['week'].unique()) >= 9:
-        mean_time, std_dev = calculate_mean_std(weekly_group['timestamp'])
+        mean_day, std_dev_day = calculate_mean_std_weekly(weekly_group['timestamp'])
         logging.info(f"Classified as weekly with {len(weekly_group)} records.")
-        return 'weekly', weekly_group, len(weekly_group), mean_time, std_dev, ', '.join(weekly_group['timestamp'].astype(str))
+        return 'weekly', weekly_group, len(weekly_group), mean_day, std_dev_day, ', '.join(weekly_group['timestamp'].astype(str))
 
     # Check monthly condition: At least once per month for 3 consecutive months
-    monthly_group = group.groupby(['timestamp'].dt.year, 'month').filter(lambda x: len(x) >= 1)
+    monthly_group = group.groupby([group['timestamp'].dt.year, group['timestamp'].dt.month]).filter(lambda x: len(x) >= 1)
     if len(monthly_group['month'].unique()) >= 3:
-        mean_time, std_dev = calculate_mean_std(monthly_group['timestamp'])
+        mean_week, std_dev_week = calculate_mean_std_monthly(monthly_group['timestamp'])
         logging.info(f"Classified as monthly with {len(monthly_group)} records.")
-        return 'monthly', monthly_group, len(monthly_group), mean_time, std_dev, ', '.join(monthly_group['timestamp'].astype(str))
+        return 'monthly', monthly_group, len(monthly_group), mean_week, std_dev_week, ', '.join(monthly_group['timestamp'].astype(str))
 
     # If no classification, return unclassified
     logging.warning(f"Records for group could not be classified. Group size: {len(group)}.")
@@ -105,7 +98,7 @@ for name, group in df.groupby('Name'):
         'Name': name,
         'Frequency': frequency if frequency > 0 else '',
         'Type': record_type,
-        'Mean Time': mean_time if pd.notna(mean_time) else '',
+        'Mean Time/Day/Week': mean_time if pd.notna(mean_time) else '',
         'Standard Deviation': std_dev if pd.notna(std_dev) else '',
         'Timestamps Considered': timestamps_considered
     })
