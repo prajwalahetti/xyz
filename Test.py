@@ -1,114 +1,114 @@
+import re
 import pandas as pd
-import numpy as np
 import logging
+from datetime import timedelta
 
-# Set up logging configuration
+# Set up logging
 logging.basicConfig(
     filename='classification_log.log',
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# Load the CSV file
-logging.info("Loading CSV file.")
-df = pd.read_csv('your_file.csv')
+# Load main dataset
+logging.info("Loading main data CSV file.")
+df = pd.read_csv('data.csv')  # Main file in format 'name, feed, timestamp'
 
-# Convert the 'timestamp' column to datetime format
-logging.info("Converting 'timestamp' column to datetime format.")
-df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')  # Use 'coerce' to handle invalid dates
+# Load name-to-feed mapping file with comma-separated regex patterns
+logging.info("Loading name-to-feed mapping file with comma-separated regex patterns.")
+name_feed_mapping = pd.read_csv('name_feed_mapping.csv', delimiter=';')  # Format: 'name; feed'
 
-# Function to calculate mean and standard deviation for days of the week (for weekly)
-def calculate_mean_std_weekly(time_series):
-    logging.info("Calculating mean and standard deviation for weekly records (day of the week).")
+# Initialize lists to store matched and unmatched rows
+matched_rows = []
+unmatched_rows = []
+
+# Iterate through each row in the main dataset
+for idx, row in df.iterrows():
+    name = row['name']
+    feed = row['feed']
     
-    # Extract day of the week (Monday=0, Sunday=6)
-    day_of_week = time_series.dt.dayofweek
+    # Filter rows based on the name and corresponding feed regex patterns
+    match_found = False
+    if name in name_feed_mapping['name'].values:
+        # Get the regex patterns for this name, split by commas
+        patterns = name_feed_mapping[name_feed_mapping['name'] == name]['feed'].values[0].split(',')
+        
+        # Check if feed matches any pattern
+        for pattern in patterns:
+            if re.match(pattern, feed):
+                matched_rows.append(row)  # If there's a match, store the row in matched_rows
+                match_found = True
+                break
+    
+    # If no match is found for the current row, add it to unmatched_rows
+    if not match_found:
+        unmatched_rows.append(row)
 
-    if day_of_week.empty:
-        logging.warning("No days of the week available for weekly calculation.")
-        return np.nan, np.nan
+# Create DataFrames for matched and unmatched entries
+df_filtered = pd.DataFrame(matched_rows)
+df_unmatched = pd.DataFrame(unmatched_rows)
 
-    # Calculate mean and standard deviation based on day of the week
-    mean_day = day_of_week.mean()
-    std_dev_day = day_of_week.std()
+# Convert timestamp to datetime for matched entries
+df_filtered['timestamp'] = pd.to_datetime(df_filtered['timestamp'], errors='coerce')
 
-    return round(mean_day, 2), round(std_dev_day, 2)
+# Frequency Analysis Functions
 
-# Function to calculate mean and standard deviation for weeks of the month (for monthly)
-def calculate_mean_std_monthly(time_series):
-    logging.info("Calculating mean and standard deviation for monthly records (week of the month).")
+def analyze_daily(df):
+    daily_df = df.groupby(df['timestamp'].dt.date).size().reset_index(name='count')
+    if len(daily_df) >= 7:
+        for i in range(len(daily_df) - 49 + 1):  # Slide through 7-week windows
+            window = daily_df.iloc[i:i + 49]  # 7 weeks = 49 days
+            if (window.groupby(window['timestamp'].dt.isocalendar().week).size() >= 5).all():
+                mean_time = df['timestamp'].dt.time.mean()
+                std_dev_time = df['timestamp'].dt.time.std()
+                return "daily", mean_time, std_dev_time
+    return None
 
-    # Extract week of the month (1st, 2nd, etc.)
-    week_of_month = (time_series.dt.day - 1) // 7 + 1
+def analyze_weekly(df):
+    weekly_df = df.groupby(df['timestamp'].dt.isocalendar().week).size().reset_index(name='count')
+    if len(weekly_df) >= 7:
+        for i in range(len(weekly_df) - 7 + 1):  # Slide through all 7-week windows
+            window = weekly_df.iloc[i:i + 7]  # 7-week window
+            if (window['count'] >= 1).all():  # Check if each week has at least one entry
+                mean_day = df['timestamp'].dt.day_name().mode()[0]  # Most common day of the week
+                std_dev_day = df['timestamp'].dt.day_name().std()
+                return "weekly", mean_day, std_dev_day
+    return None
 
-    if week_of_month.empty:
-        logging.warning("No weeks of the month available for monthly calculation.")
-        return np.nan, np.nan
+def analyze_monthly(df):
+    monthly_df = df.groupby([df['timestamp'].dt.year, df['timestamp'].dt.month]).size().reset_index(name='count')
+    if len(monthly_df) >= 3:
+        for i in range(len(monthly_df) - 3 + 1):  # Slide through all 3-month windows
+            window = monthly_df.iloc[i:i + 3]  # 3-month window
+            if (window['count'] >= 1).all():  # Check if each month has at least one entry
+                mean_week = df['timestamp'].dt.isocalendar().week.mean()
+                std_dev_week = df['timestamp'].dt.isocalendar().week.std()
+                return "monthly", mean_week, std_dev_week
+    return None
 
-    # Calculate mean and standard deviation based on the week of the month
-    mean_week = week_of_month.mean()
-    std_dev_week = week_of_month.std()
-
-    return round(mean_week, 2), round(std_dev_week, 2)
-
-# Function to classify daily, weekly, or monthly
-def classify_records(group):
-    logging.info(f"Classifying records for group with {len(group)} entries.")
-    group['week'] = group['timestamp'].dt.isocalendar().week
-    group['month'] = group['timestamp'].dt.month
-
-    # Check daily condition: 5/7 days for 7 consecutive weeks
-    daily_weeks = group.groupby('week').filter(lambda x: x['timestamp'].dt.day.nunique() >= 5)
-    if len(daily_weeks['week'].unique()) >= 7:
-        mean_time, std_dev = calculate_mean_std_daily(daily_weeks['timestamp'])
-        logging.info(f"Classified as daily with {len(daily_weeks)} records.")
-        return 'daily', daily_weeks, len(daily_weeks), mean_time, std_dev, ', '.join(daily_weeks['timestamp'].astype(str))
-
-    # Check weekly condition: At least once per week for 9 consecutive weeks
-    weekly_group = group.groupby('week').filter(lambda x: len(x) >= 1)
-    if len(weekly_group['week'].unique()) >= 9:
-        mean_day, std_dev_day = calculate_mean_std_weekly(weekly_group['timestamp'])
-        logging.info(f"Classified as weekly with {len(weekly_group)} records.")
-        return 'weekly', weekly_group, len(weekly_group), mean_day, std_dev_day, ', '.join(weekly_group['timestamp'].astype(str))
-
-    # Check monthly condition: At least once per month for 3 consecutive months
-    monthly_group = group.groupby([group['timestamp'].dt.year, group['timestamp'].dt.month]).filter(lambda x: len(x) >= 1)
-    if len(monthly_group['month'].unique()) >= 3:
-        mean_week, std_dev_week = calculate_mean_std_monthly(monthly_group['timestamp'])
-        logging.info(f"Classified as monthly with {len(monthly_group)} records.")
-        return 'monthly', monthly_group, len(monthly_group), mean_week, std_dev_week, ', '.join(monthly_group['timestamp'].astype(str))
-
-    # If no classification, return unclassified
-    logging.warning(f"Records for group could not be classified. Group size: {len(group)}.")
-    return 'unclassified', group, 0, np.nan, np.nan, ', '.join(group['timestamp'].astype(str))
-
-# Initialize list to collect result data
+# Apply Analysis Functions to Each Group
 results = []
+for name, group in df_filtered.groupby(['name', 'feed']):
+    daily_result = analyze_daily(group)
+    if daily_result:
+        results.append((name, *daily_result))
+        continue
+    
+    weekly_result = analyze_weekly(group)
+    if weekly_result:
+        results.append((name, *weekly_result))
+        continue
+    
+    monthly_result = analyze_monthly(group)
+    if monthly_result:
+        results.append((name, *monthly_result))
+    else:
+        results.append((name, "unclassified", None, None))
 
-# Group data by 'Name' to calculate stats for each person
-for name, group in df.groupby('Name'):
-    logging.info(f"Processing records for {name}.")
-    group = group.sort_values('timestamp')
+# Convert results to DataFrame
+results_df = pd.DataFrame(results, columns=['name', 'frequency', 'mean', 'std_dev'])
 
-    # Classify each group
-    record_type, valid_group, frequency, mean_time, std_dev, timestamps_considered = classify_records(group)
-
-    # Append the results (classified or unclassified)
-    results.append({
-        'Name': name,
-        'Frequency': frequency if frequency > 0 else '',
-        'Type': record_type,
-        'Mean Time/Day/Week': mean_time if pd.notna(mean_time) else '',
-        'Standard Deviation': std_dev if pd.notna(std_dev) else '',
-        'Timestamps Considered': timestamps_considered
-    })
-
-# Create DataFrame and export to CSV
-logging.info("Writing results to CSV file.")
-results_df = pd.DataFrame(results)
-results_df.to_csv('output_with_classifications.csv', index=False)
-
-logging.info("Process completed successfully.")
-
-# Print results
-print(results_df)
+# Save results to CSV
+logging.info("Saving analysis results to CSV.")
+results_df.to_csv('classified_entries_analysis.csv', index=False)
+df_unmatched.to_csv('unmatched_entries.csv', index=False)
