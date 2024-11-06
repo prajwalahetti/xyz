@@ -1,6 +1,7 @@
 import re
 import pandas as pd
 import logging
+from datetime import timedelta
 
 # Set up logging
 logging.basicConfig(
@@ -11,11 +12,11 @@ logging.basicConfig(
 
 # Load main dataset
 logging.info("Loading main data CSV file.")
-df = pd.read_csv('data.csv')  # Main file format: 'name, feed, timestamp'
+df = pd.read_csv('data.csv')  # Main file in format 'name, feed, timestamp'
 
-# Load name-to-feed mapping file with semicolon-separated regex patterns
-logging.info("Loading name-to-feed mapping file.")
-name_feed_mapping = pd.read_csv('name_feed_mapping.csv', delimiter=';')  # Format: 'name;feed'
+# Load name-to-feed mapping file with comma-separated regex patterns
+logging.info("Loading name-to-feed mapping file with comma-separated regex patterns.")
+name_feed_mapping = pd.read_csv('name_feed_mapping.csv', delimiter=';')  # Format: 'name; feed'
 
 # Initialize lists to store matched and unmatched rows
 matched_rows = []
@@ -36,7 +37,6 @@ for idx, row in df.iterrows():
         for pattern in patterns:
             try:
                 if re.match(pattern.strip(), feed):  # Ensure whitespace is trimmed
-                    # If there's a match, store the row with the regex pattern instead of feed name
                     matched_row = row.copy()  # Copy row data
                     matched_row['feed'] = pattern.strip()  # Replace feed with matched regex pattern
                     matched_rows.append(matched_row)
@@ -56,55 +56,69 @@ df_unmatched = pd.DataFrame(unmatched_rows)
 # Convert timestamp to datetime for matched entries
 df_filtered['timestamp'] = pd.to_datetime(df_filtered['timestamp'], errors='coerce')
 
-# Define functions to classify as daily, weekly, or monthly
-def is_daily(group):
-    weekly_counts = group['timestamp'].dt.isocalendar().week.value_counts()
-    return (weekly_counts >= 5).rolling(7).sum().dropna().ge(7).any()
+# Frequency Analysis Functions
 
-def is_weekly(group):
-    weekly_presence = group['timestamp'].dt.isocalendar().week.nunique()
-    return weekly_presence >= 9
+def analyze_daily(df):
+    daily_df = df.groupby(df['timestamp'].dt.date).size().reset_index(name='count')
+    if len(daily_df) >= 7:
+        for i in range(len(daily_df) - 49 + 1):  # Slide through 7-week windows
+            window = daily_df.iloc[i:i + 49]  # 7 weeks = 49 days
+            if (window.groupby(window['timestamp'].dt.isocalendar().week).size() >= 5).all():
+                # Convert timestamp to minutes for mean and std deviation calculations
+                df['time_in_minutes'] = df['timestamp'].dt.hour * 60 + df['timestamp'].dt.minute
+                mean_minutes = df['time_in_minutes'].mean()
+                std_minutes = df['time_in_minutes'].std()
+                
+                # Convert back to hours and minutes
+                mean_hours, mean_minutes = divmod(mean_minutes, 60)
+                return "daily", f"{int(mean_hours)}:{int(mean_minutes):02d}", std_minutes
+    return None
 
-def is_monthly(group):
-    monthly_presence = group['timestamp'].dt.to_period('M').nunique()
-    return monthly_presence >= 3
+def analyze_weekly(df):
+    weekly_df = df.groupby(df['timestamp'].dt.isocalendar().week).size().reset_index(name='count')
+    if len(weekly_df) >= 7:
+        for i in range(len(weekly_df) - 7 + 1):  # Slide through all 7-week windows
+            window = weekly_df.iloc[i:i + 7]  # 7-week window
+            if (window['count'] >= 1).all():  # Check if each week has at least one entry
+                mean_day = df['timestamp'].dt.day_name().mode()[0]  # Most common day of the week
+                std_dev_day = df['timestamp'].dt.day_name().value_counts().std()
+                return "weekly", mean_day, std_dev_day
+    return None
 
-# Classify each name and feed combination
+def analyze_monthly(df):
+    monthly_df = df.groupby([df['timestamp'].dt.year, df['timestamp'].dt.month]).size().reset_index(name='count')
+    if len(monthly_df) >= 3:
+        for i in range(len(monthly_df) - 3 + 1):  # Slide through all 3-month windows
+            window = monthly_df.iloc[i:i + 3]  # 3-month window
+            if (window['count'] >= 1).all():  # Check if each month has at least one entry
+                mean_week = df['timestamp'].dt.isocalendar().week.mean()
+                std_dev_week = df['timestamp'].dt.isocalendar().week.std()
+                return "monthly", mean_week, std_dev_week
+    return None
+
+# Apply Analysis Functions to Each Group
 results = []
 for (name, feed), group in df_filtered.groupby(['name', 'feed']):
-    frequency_type = None
-    if is_daily(group):
-        frequency_type = 'Daily'
-    elif is_weekly(group):
-        frequency_type = 'Weekly'
-    elif is_monthly(group):
-        frequency_type = 'Monthly'
+    daily_result = analyze_daily(group)
+    if daily_result:
+        results.append((name, *daily_result))
+        continue
     
-    if frequency_type:
-        # Extract the time component and convert to minutes since midnight for calculations
-        group.loc[:, 'time_in_minutes'] = group['timestamp'].dt.hour * 60 + group['timestamp'].dt.minute
-        mean_time_in_minutes = group['time_in_minutes'].mean()
-        std_time_in_minutes = group['time_in_minutes'].std()
-        
-        # Convert mean time back to hours and minutes
-        mean_hours = int(mean_time_in_minutes // 60)
-        mean_minutes = int(mean_time_in_minutes % 60)
-        
-        results.append({
-            'name': name,
-            'feed': feed,
-            'frequency': frequency_type,
-            'mean_time': f"{mean_hours}:{mean_minutes:02d}",
-            'std_deviation_minutes': std_time_in_minutes,
-            'timestamps_considered': group['timestamp'].tolist()
-        })
+    weekly_result = analyze_weekly(group)
+    if weekly_result:
+        results.append((name, *weekly_result))
+        continue
+    
+    monthly_result = analyze_monthly(group)
+    if monthly_result:
+        results.append((name, *monthly_result))
+    else:
+        results.append((name, "unclassified", None, None))
 
-# Create DataFrame for results
-df_results = pd.DataFrame(results)
+# Convert results to DataFrame
+results_df = pd.DataFrame(results, columns=['name', 'frequency', 'mean', 'std_dev'])
 
-# Saving the classified and unclassified data to CSV files
-df_results.to_csv('classified_data.csv', index=False)
-df_unmatched.to_csv('unclassified_data.csv', index=False)
-
-# Logging completion
-logging.info("Data processing complete. Classified and unclassified data saved.")
+# Save results to CSV
+logging.info("Saving analysis results to CSV.")
+results_df.to_csv('classified_entries_analysis.csv', index=False)
+df_unmatched.to_csv('unmatched_entries.csv', index=False)
