@@ -1,3 +1,13 @@
+SELECT 
+    tablename, 
+    (SELECT COUNT(*) FROM public." || tablename || ") AS row_count
+FROM pg_tables
+WHERE schemaname = 'public' AND tablename IN ('table1', 'table2', 'table3')
+ORDER BY row_count DESC;
+
+
+
+
 WITH RECURSIVE fkey_tree AS (
   SELECT
     c.oid::regclass::text AS table_name,
