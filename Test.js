@@ -1,3 +1,31 @@
+WITH RECURSIVE fkey_tree AS (
+  SELECT
+    c.oid::regclass::text AS table_name,
+    NULL::text AS depends_on
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE c.relkind = 'r'  -- only tables
+    AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+
+  UNION ALL
+
+  SELECT
+    confrelid::regclass::text AS table_name,
+    conrelid::regclass::text AS depends_on
+  FROM pg_constraint
+  WHERE contype = 'f'
+), ordered AS (
+  SELECT table_name, array_agg(depends_on) AS dependencies
+  FROM fkey_tree
+  GROUP BY table_name
+)
+SELECT table_name
+FROM ordered
+ORDER BY array_length(dependencies, 1) NULLS FIRST;
+
+
+
+
 const updateItems = (array, outerKey, subSectionKey, updates) => {
   return array.map(outerObj => {
     // Check if the outer object's key matches the constant outer key
