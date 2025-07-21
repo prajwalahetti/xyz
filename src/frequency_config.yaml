@@ -1,0 +1,35 @@
+frequency_patterns:
+  daily:
+    description: "Feed/rec appears more than once a day for 5 consecutive days"
+    min_daily_occurrences: 2   # Minimum occurrences per day to qualify as daily frequency
+    streak_days: 5             # Number of consecutive days meeting min occurrence for daily
+
+  weekly:
+    description: "Feed/rec appears once in a week for 4 consecutive weeks"
+    weekly_occurrences: 1      # Exact occurrences per week to qualify as weekly frequency
+    streak_weeks: 4            # Number of consecutive weeks meeting this count for weekly
+
+  bi_weekly:
+    description: "Feed/rec appears once every two weeks for 2 consecutive periods"
+    biweekly_occurrences: 1
+    streak_biweeks: 2
+
+  monthly:
+    description: "Feed/rec appears once per month for 3 consecutive months"
+    monthly_occurrences: 1
+    streak_months: 3
+
+  quarterly:
+    description: "Feed/rec appears once per quarter for 2 consecutive quarters"
+    quarterly_occurrences: 1
+    streak_quarters: 2
+
+  half_yearly:
+    description: "Feed/rec appears once every six months for 2 consecutive half years"
+    halfyearly_occurrences: 1
+    streak_halfyears: 2
+
+  yearly:
+    description: "Feed/rec appears once a year for 2 consecutive years"
+    yearly_occurrences: 1
+    streak_years: 2
