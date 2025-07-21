@@ -1,39 +1,37 @@
 import logging
-from config_loader import load_config
-from data_loader import load_data
-from feed_rec_matcher import match_feeds_to_recs, explode_matched_feeds
-from frequency_analysis import assign_feed_frequencies, assign_rec_frequencies
-from sla_check import calculate_rec_sla, calculate_feed_sla
-from output_writer import save_outputs
+from src.data_loader import load_data
+from src.feed_rec_matcher import match_feeds_to_recs
+from src.frequency_analysis import (
+    calculate_rec_frequency,
+    calculate_feed_frequency_by_mapping
+)
+from src.sla_check import rec_sla_report
+from src.output_writer import (
+    write_rec_sla_report,
+    write_feed_frequency_report
+)
 
-def setup_logging(logfile='analysis_logs.log'):
+def setup_logging():
     logging.basicConfig(
-        filename=logfile,
+        filename='data/analysis_logs.log',
         level=logging.INFO,
         format='%(asctime)s | %(levelname)s | %(message)s'
     )
 
 def main():
     setup_logging()
-    config = load_config('frequency_config.yaml')
-    rec_build_df, feed_df, mapping_df = load_data(
-        'rec_build_sla.csv', 'feed_sla.csv', 'rec_feed_mapping.csv'
+    rec_df, feed_df, map_df = load_data(
+        'data/rec_build_sla.csv', 'data/feed_sla.csv', 'data/rec_feed_mapping.csv'
     )
-    feed_df = match_feeds_to_recs(feed_df, mapping_df)
-    matched_feed_df = explode_matched_feeds(feed_df)
-    matched_feed_df = assign_feed_frequencies(matched_feed_df, config)
-    rec_build_df = assign_rec_frequencies(rec_build_df, config)
-    rec_sla = calculate_rec_sla(rec_build_df, matched_feed_df)
-    matched_feed_df = calculate_feed_sla(matched_feed_df)
+    feed_df = match_feeds_to_recs(feed_df, map_df)
+    rec_frequency_df = calculate_rec_frequency(rec_df)
+    rec_report = rec_sla_report(rec_df, feed_df, map_df, rec_frequency_df)
+    write_rec_sla_report(rec_report, 'data/rec_sla_report.csv')
 
-    feed_sla_percent = matched_feed_df['feed_on_time'].mean() * 100
-    rec_sla_percent = rec_sla['rec_met_sla'].mean() * 100
-    logging.info(f"Feed SLA met: {feed_sla_percent:.2f}%")
-    logging.info(f"REC SLA met: {rec_sla_percent:.2f}%")
-    print(f"Feed SLA: {feed_sla_percent:.2f}% | REC SLA: {rec_sla_percent:.2f}%")
-    print("Frequency classifications and SLA status saved to CSV and logs.")
+    feed_freq_report = calculate_feed_frequency_by_mapping(feed_df, map_df)
+    write_feed_frequency_report(feed_freq_report, 'data/feed_frequency_report.csv')
 
-    save_outputs(matched_feed_df, rec_sla, 'feed_sla_output.csv', 'rec_sla_output.csv')
+    print("✅ All reports generated in /data.")
 
 if __name__ == "__main__":
     main()

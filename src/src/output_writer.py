@@ -1,6 +1,7 @@
-import logging
+def write_rec_sla_report(df, filename):
+    df.to_csv(filename, index=False)
+    print(f"✅ rec_sla_report written to {filename}")
 
-def save_outputs(feed_df, rec_df, feed_output_path, rec_output_path):
-    feed_df.to_csv(feed_output_path, index=False)
-    rec_df.to_csv(rec_output_path, index=False)
-    logging.info(f"Saved outputs: {feed_output_path}, {rec_output_path}")
+def write_feed_frequency_report(df, filename):
+    df.to_csv(filename, index=False)
+    print(f"✅ feed_frequency_report written to {filename}")
