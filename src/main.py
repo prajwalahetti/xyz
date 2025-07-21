@@ -1,4 +1,3 @@
-import logging
 from src.data_loader import load_data
 from src.feed_rec_matcher import match_feeds_to_recs
 from src.frequency_analysis import (
@@ -11,15 +10,7 @@ from src.output_writer import (
     write_feed_frequency_report
 )
 
-def setup_logging():
-    logging.basicConfig(
-        filename='data/analysis_logs.log',
-        level=logging.INFO,
-        format='%(asctime)s | %(levelname)s | %(message)s'
-    )
-
 def main():
-    setup_logging()
     rec_df, feed_df, map_df = load_data(
         'data/rec_build_sla.csv', 'data/feed_sla.csv', 'data/rec_feed_mapping.csv'
     )
