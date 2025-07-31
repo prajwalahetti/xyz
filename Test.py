@@ -1,26 +1,32 @@
 import pandas as pd
 from datetime import timedelta
 
-# Load and parse data
-df = pd.read_csv("arrival_data.csv", usecols=["b", "c"], parse_dates=["c"])
+# --- Load and clean data ---
+df = pd.read_csv("arrival_data.csv", usecols=["b", "c"])
 df.columns = ["name", "timestamp"]
 
-# Convert to UTC (GMT)
-df["timestamp"] = df["timestamp"].dt.tz_convert("UTC") if df["timestamp"].dt.tz else df["timestamp"].dt.tz_localize(None).dt.tz_localize("UTC")
+# Ensure timestamp is parsed correctly
+df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+df = df.dropna(subset=["timestamp"])  # Drop rows with invalid/missing timestamps
 
-# Extract date parts
+# Ensure timestamps are in UTC (GMT)
+if df["timestamp"].dt.tz is None:
+    df["timestamp"] = df["timestamp"].dt.tz_localize("UTC")
+else:
+    df["timestamp"] = df["timestamp"].dt.tz_convert("UTC")
+
+# Extract useful time parts
 df["date"] = df["timestamp"].dt.date
 df["week"] = df["timestamp"].dt.to_period("W").apply(lambda r: r.start_time.date())
 df["month"] = df["timestamp"].dt.to_period("M").apply(lambda r: r.start_time.date())
 
-# --- SLA CALCULATION ---
+# --- SLA Calculation ---
 df = df.sort_values(by=["name", "timestamp"])
 df["sla_minutes"] = df.groupby("name")["timestamp"].diff().dt.total_seconds() / 60
 df = df.dropna(subset=["sla_minutes"])
 
 sla_stats = df.groupby("name")["sla_minutes"].agg(["median", "std"]).reset_index()
 
-# Convert to hh:mm format
 def format_hm(minutes):
     if pd.isna(minutes):
         return "N/A"
@@ -32,12 +38,11 @@ sla_stats["median_sla"] = sla_stats["median"].apply(format_hm)
 sla_stats["std_sla"] = sla_stats["std"].apply(format_hm)
 sla_stats = sla_stats[["name", "median_sla", "std_sla"]]
 
-# --- FREQUENCY CLASSIFICATION ---
+# --- Frequency Classification ---
 results = []
 
 def has_consecutive_streak(periods, required, threshold_func):
     periods = sorted(periods)
-    streak = 0
     for i in range(len(periods) - required + 1):
         window = periods[i:i+required]
         expected = [window[0] + timedelta(weeks=j) for j in range(required)]
@@ -50,21 +55,19 @@ for name, group in df.groupby("name"):
     month_counts = group.groupby("month")["date"].nunique()
     
     # Daily: 5 days/week for 7 consecutive weeks
-    if has_consecutive_streak(week_counts.index.tolist(), 7, lambda w: week_counts[w] >= 5):
+    if has_consecutive_streak(week_counts.index.tolist(), 7, lambda w: week_counts.get(w, 0) >= 5):
         freq = "daily"
     
-    # Weekly: once/week for 7 consecutive weeks
-    elif has_consecutive_streak(week_counts.index.tolist(), 7, lambda w: week_counts[w] >= 1):
+    # Weekly: 1+ arrival per week for 7 consecutive weeks
+    elif has_consecutive_streak(week_counts.index.tolist(), 7, lambda w: week_counts.get(w, 0) >= 1):
         freq = "weekly"
     
-    # Monthly: once/month for 3 consecutive months
+    # Monthly: 1+ per month for 3 consecutive months
     else:
         month_list = sorted(month_counts.index.tolist())
         found = False
         for i in range(len(month_list) - 2):
-            m0 = month_list[i]
-            m1 = month_list[i+1]
-            m2 = month_list[i+2]
+            m0, m1, m2 = month_list[i:i+3]
             if (
                 (m1.month - m0.month == 1 or (m0.month == 12 and m1.month == 1)) and
                 (m2.month - m1.month == 1 or (m1.month == 12 and m2.month == 1)) and
@@ -80,7 +83,9 @@ for name, group in df.groupby("name"):
 
 freq_df = pd.DataFrame(results, columns=["name", "frequency"])
 
-# --- COMBINE AND EXPORT ---
+# --- Merge SLA + Frequency ---
 final_df = pd.merge(sla_stats, freq_df, on="name", how="outer").fillna("unclassified")
+
+# --- Save output ---
 final_df.to_csv("combined_sla_frequency_analysis.csv", index=False)
-print("Saved to combined_sla_frequency_analysis.csv")
+print("✅ Saved to combined_sla_frequency_analysis.csv")
