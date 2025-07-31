@@ -1,70 +1,78 @@
 import pandas as pd
+from dateutil import parser
+from typing import Optional
 import re
 
-# Sample input
-df = pd.DataFrame({'timestamp': [
-    '2025-07-31 14:00:00 PST',
-    '31/07/2025 22:00 +0530',
-    'Jul 31, 2025 04:00PM UTC',
-    '07/31/2025 02:00 PM EDT',
-    '2025-07-31T18:00:00Z',
-    'Logged at: 2025-07-31 13:00:00 UTC',
-    'nonsense string',
-    '',
-    None
-]})
+# === CONFIGURATION ===
+INPUT_CSV = "input.csv"                     # CSV file with a 'timestamp' column
+OUTPUT_CSV = "parsed_output.csv"            # Output CSV file with parsed datetimes
+UNMATCHED_LOG_FILE = "unmatched_timestamps.txt"  # File to log failed entries
+TIMESTAMP_COLUMN = "timestamp"              # Name of the timestamp column
 
-# List to collect unmatched/bad values
+
+# === Globals ===
 unmatched_entries = []
 
-# Function to extract parts from string
-def extract_parts_or_log(text):
-    text = str(text).strip() if text else ''
-    
-    # Regex pattern with named groups
-    pattern = (
-        r'(?P<date>\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|'            # 07/31/2025 or 31-07-2025
-        r'\d{4}[/-]\d{2}[/-]\d{2}|'                           # 2025-07-31
-        r'[A-Za-z]{3} \d{1,2}, \d{4})'                        # Jul 31, 2025
-        r'\s*'
-        r'(?P<time>\d{1,2}:\d{2}(?::\d{2})?)?'                # HH:MM[:SS]
-        r'\s*'
-        r'(?P<ampm>[APap][Mm])?'                              # AM/PM
-        r'\s*'
-        r'(?P<offset>[+-]\d{2}:?\d{2}|Z)?'                    # +0530 or Z
-        r'\s*'
-        r'(?P<tz>[A-Z]{2,4})?'                                # Timezone like UTC, PST, EDT
-    )
-    
-    match = re.search(pattern, text)
-    
-    if match:
-        return pd.Series({
-            'date': match.group('date'),
-            'time': match.group('time'),
-            'ampm': match.group('ampm'),
-            'offset': match.group('offset'),
-            'timezone': match.group('tz')
-        })
-    else:
+
+# === Timestamp Parsing Function ===
+def parse_timestamp_to_utc(text: Optional[str]) -> Optional[pd.Timestamp]:
+    """
+    Parse a messy timestamp string into a UTC datetime.
+    Handles formats like:
+      - 31 July 2025 01:23:45.678 PM GMT
+      - 02 Dec 2024 11:59:59.123 AM +1:00
+      - ISO 8601 formats with or without timezone
+    Returns pd.Timestamp in UTC, or NaT if it fails.
+    """
+    try:
+        if pd.isna(text) or not str(text).strip():
+            raise ValueError("Empty or null")
+
+        text = str(text).strip()
+
+        # Normalize known timezone keywords
+        text = re.sub(r'\bGMT\b', '+0000', text, flags=re.IGNORECASE)
+
+        # Parse using dateutil
+        dt = parser.parse(text)
+
+        # Convert to UTC
+        return dt.astimezone(tz=None).astimezone(tz=pd.Timestamp.utcnow().tz)
+
+    except Exception as e:
         unmatched_entries.append(text)
-        return pd.Series({
-            'date': None,
-            'time': None,
-            'ampm': None,
-            'offset': None,
-            'timezone': None
-        })
+        return pd.NaT
 
-# Apply to the DataFrame
-extracted = df['timestamp'].apply(extract_parts_or_log)
-df = df.join(extracted)
 
-# Show unmatched entries
-print("\n❌ Unmatched entries:")
-for bad in unmatched_entries:
-    print(f" - {repr(bad)}")
+# === Main Script ===
+def main():
+    print(f"📥 Reading from {INPUT_CSV}")
+    df = pd.read_csv(INPUT_CSV)
 
-# Display result
-print("\n✅ Parsed DataFrame:")
-print(df)
+    if TIMESTAMP_COLUMN not in df.columns:
+        raise ValueError(f"Column '{TIMESTAMP_COLUMN}' not found in input CSV.")
+
+    # Parse timestamps
+    print("🧠 Parsing timestamps...")
+    df["parsed_timestamp"] = df[TIMESTAMP_COLUMN].apply(parse_timestamp_to_utc)
+
+    # Format parsed timestamp for readability
+    df["parsed_timestamp"] = df["parsed_timestamp"].dt.strftime('%Y-%m-%d %H:%M:%S.%f')
+
+    # Save output CSV
+    print(f"💾 Writing parsed data to {OUTPUT_CSV}")
+    df.to_csv(OUTPUT_CSV, index=False)
+
+    # Save unmatched log
+    if unmatched_entries:
+        print(f"⚠️ {len(unmatched_entries)} entries could not be parsed. Logging to {UNMATCHED_LOG_FILE}")
+        with open(UNMATCHED_LOG_FILE, "w") as f:
+            f.write("Unmatched timestamp entries:\n\n")
+            for entry in unmatched_entries:
+                f.write(f"{repr(entry)}\n")
+    else:
+        print("✅ All timestamps parsed successfully.")
+
+
+if __name__ == "__main__":
+    main()
