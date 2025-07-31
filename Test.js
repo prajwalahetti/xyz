@@ -1,76 +1,82 @@
-SELECT 
-    tablename, 
-    (SELECT COUNT(*) FROM public." || tablename || ") AS row_count
-FROM pg_tables
-WHERE schemaname = 'public' AND tablename IN ('table1', 'table2', 'table3')
-ORDER BY row_count DESC;
+// To run this script:
+// 1. Install luxon and fs with: npm install luxon csv-parser csv-writer
+// 2. Place input.csv in the same directory
+// 3. Run using: node script.js
 
+const fs = require('fs');
+const path = require('path');
+const { DateTime } = require('luxon');
+const csv = require('csv-parser');
+const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
+const INPUT_CSV = 'input.csv';
+const OUTPUT_CSV = 'output_utc.csv';
+const UNMATCHED_TXT = 'unmatched_timestamps.txt';
+const ERROR_LOG = 'error_log.txt';
+const TIMESTAMP_COLUMN = 'timestamp';
 
+// Specify columns to keep
+const COLUMNS_TO_KEEP = ['id', 'name', TIMESTAMP_COLUMN];
 
-WITH RECURSIVE fkey_tree AS (
-  SELECT
-    c.oid::regclass::text AS table_name,
-    NULL::text AS depends_on
-  FROM pg_class c
-  JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE c.relkind = 'r'  -- only tables
-    AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+const unmatchedEntries = [];
+const results = [];
+const errorLog = [];
 
-  UNION ALL
+const parseToUTC = (text) => {
+  if (!text || typeof text !== 'string' || text.trim() === '') {
+    return { original: text, result: null, error: 'Empty or null' };
+  }
 
-  SELECT
-    confrelid::regclass::text AS table_name,
-    conrelid::regclass::text AS depends_on
-  FROM pg_constraint
-  WHERE contype = 'f'
-), ordered AS (
-  SELECT table_name, array_agg(depends_on) AS dependencies
-  FROM fkey_tree
-  GROUP BY table_name
-)
-SELECT table_name
-FROM ordered
-ORDER BY array_length(dependencies, 1) NULLS FIRST;
+  text = text.trim();
 
+  // Custom format: "21-MAR-25 2.07.06.4343 AM"
+  const customRegex = /^(\d{1,2})-([A-Z]{3})-(\d{2}) (\d{1,2})\.(\d{2})\.(\d{2})\.(\d{1,6}) (AM|PM)$/i;
+  const customMatch = text.match(customRegex);
 
+  if (customMatch) {
+    const [_, day, monthAbbr, year, hour, minute, second, ms, ampm] = customMatch;
+    const fullYear = parseInt(year, 10) + (parseInt(year) < 50 ? 2000 : 1900);
+    const cleanString = `${day}-${monthAbbr}-${fullYear} ${hour}:${minute}:${second}.${ms} ${ampm}`;
+    const parsed = DateTime.fromFormat(cleanString, 'd-MMM-yyyy h:mm:ss.SSSS a', { zone: 'UTC' });
+    return parsed.isValid
+      ? { original: text, result: parsed.toUTC().toISO(), error: null }
+      : { original: text, result: null, error: 'Invalid parsed result' };
+  }
 
+  // Normalize generic formats
+  const cleaned = text.replace(/GMT/gi, '+0000').replace(/\s+/g, ' ');
 
-const updateItems = (array, outerKey, subSectionKey, updates) => {
-  return array.map(outerObj => {
-    // Check if the outer object's key matches the constant outer key
-    if (outerObj.key === outerKey) {
-      return {
-        ...outerObj,
-        subSection: outerObj.subSection.map(subObj => {
-          // Check if the subSection object's key matches the constant subSection key
-          if (subObj.key === subSectionKey) {
-            return {
-              ...subObj,
-              items: subObj.items.map(itemObj => {
-                // Check if the current item's key matches any of the target keys in updates
-                const updateForItem = updates.find(update => update.targetItemKey === itemObj.key);
-                
-                // If a match is found, update the data property
-                return updateForItem ? { ...itemObj, data: updateForItem.newData } : itemObj;
-              }),
-            };
-          }
-          return subObj;
-        }),
-      };
-    }
-    return outerObj;
-  });
+  const autoParsed = DateTime.fromISO(cleaned, { setZone: true });
+  if (autoParsed.isValid) {
+    return { original: text, result: autoParsed.toUTC().toISO(), error: null };
+  }
+
+  return { original: text, result: null, error: 'Unparsable format' };
 };
 
-// Example usage: Update multiple items for constant outerKey and subKey
-const outerKey = 'outerKey1';
-const subSectionKey = 'subKey1';
-const updates = [
-  { targetItemKey: 'targetKey1', newData: 'newValue1' },
-  { targetItemKey: 'targetKey2', newData: 'newValue2' },
-];
+fs.createReadStream(INPUT_CSV)
+  .pipe(csv())
+  .on('data', (row) => {
+    const filteredRow = Object.fromEntries(
+      Object.entries(row).filter(([key]) => COLUMNS_TO_KEEP.includes(key))
+    );
 
-const updatedData = updateItems(data, outerKey, subSectionKey, updates);
-console.log(updatedData);
+    const original = filteredRow[TIMESTAMP_COLUMN];
+    const { result, error } = parseToUTC(original);
+    if (result) {
+      results.push({ ...filteredRow, utc: result });
+    } else {
+      unmatchedEntries.push(original);
+      errorLog.push(`Failed to parse: ${original} | Error: ${error}`);
+      results.push({ ...filteredRow, utc: '' });
+    }
+  })
+  .on('end', () => {
+    // Write parsed CSV
+    const headers = Object.keys(results[0] || {}).map((key) => ({ id: key, title: key }));
+    const writer = createCsvWriter({ path: OUTPUT_CSV, header: headers });
+    writer.writeRecords(results).then(() => {
+      fs.writeFileSync(UNMATCHED_TXT, unmatchedEntries.join('\n'));
+      fs.writeFileSync(ERROR_LOG, errorLog.join('\n'));
+    });
+  });
