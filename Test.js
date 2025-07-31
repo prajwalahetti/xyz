@@ -27,28 +27,46 @@ const parseToUTC = (text) => {
     return { original: text, result: null, error: 'Empty or null' };
   }
 
-  text = text.trim();
+  text = text.trim().replace(/GMT/gi, '+0000').replace(/\s+/g, ' ');
 
-  // Custom format: "21-MAR-25 2.07.06.4343 AM"
-  const customRegex = /^(\d{1,2})-([A-Z]{3})-(\d{2}) (\d{1,2})\.(\d{2})\.(\d{2})\.(\d{1,6}) (AM|PM)$/i;
-  const customMatch = text.match(customRegex);
-
-  if (customMatch) {
-    const [_, day, monthAbbr, year, hour, minute, second, ms, ampm] = customMatch;
-    const fullYear = parseInt(year, 10) + (parseInt(year) < 50 ? 2000 : 1900);
-    const cleanString = `${day}-${monthAbbr}-${fullYear} ${hour}:${minute}:${second}.${ms} ${ampm}`;
-    const parsed = DateTime.fromFormat(cleanString, 'd-MMM-yyyy h:mm:ss.SSSS a', { zone: 'UTC' });
-    return parsed.isValid
-      ? { original: text, result: parsed.toUTC().toISO(), error: null }
-      : { original: text, result: null, error: 'Invalid parsed result' };
+  // 1. Native JavaScript Date parse
+  const nativeDate = new Date(text);
+  if (!isNaN(nativeDate.getTime())) {
+    return {
+      original: text,
+      result: DateTime.fromJSDate(nativeDate).toUTC().toISO(),
+      error: null
+    };
   }
 
-  // Normalize generic formats
-  const cleaned = text.replace(/GMT/gi, '+0000').replace(/\s+/g, ' ');
+  // 2. Try known formats
+  const knownFormats = [
+    'd-MMM-yy h.mm.ss.SSSS a',
+    'd-MMM-yy h.mm.ss.SSS a',
+    'd-MMM-yyyy h:mm:ss a',
+    'd-MMM-yyyy h:mm:ss.SSS a',
+    'dd/MM/yyyy HH:mm:ss',
+    'yyyy-MM-dd HH:mm:ss',
+    'yyyy-MM-ddTHH:mm:ssZ',
+    'MM/dd/yyyy h:mm:ss a'
+  ];
 
-  const autoParsed = DateTime.fromISO(cleaned, { setZone: true });
-  if (autoParsed.isValid) {
-    return { original: text, result: autoParsed.toUTC().toISO(), error: null };
+  for (const format of knownFormats) {
+    const parsed = DateTime.fromFormat(text, format, { setZone: true });
+    if (parsed.isValid) {
+      return { original: text, result: parsed.toUTC().toISO(), error: null };
+    }
+  }
+
+  // 3. ISO or RFC fallback
+  const isoParsed = DateTime.fromISO(text, { setZone: true });
+  if (isoParsed.isValid) {
+    return { original: text, result: isoParsed.toUTC().toISO(), error: null };
+  }
+
+  const rfcParsed = DateTime.fromRFC2822(text, { setZone: true });
+  if (rfcParsed.isValid) {
+    return { original: text, result: rfcParsed.toUTC().toISO(), error: null };
   }
 
   return { original: text, result: null, error: 'Unparsable format' };
