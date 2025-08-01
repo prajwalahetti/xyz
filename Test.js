@@ -93,6 +93,7 @@ const analyzeCategories = () => {
     const filtered = datetimes.filter(dt => dt >= DateTime.utc().minus({ months: 6 }));
     const byWeek = new Map();
     const byMonth = new Map();
+    const timestamps = filtered.map(dt => dt.toMillis());
 
     filtered.forEach(dt => {
       const week = dt.weekYear + '-' + dt.weekNumber;
@@ -136,7 +137,25 @@ const analyzeCategories = () => {
     else if (weeklyStreak >= 7) category = 'weekly';
     else if (monthlyStreak >= 3) category = 'monthly';
 
-    categories[name] = { category };
+    timestamps.sort((a, b) => a - b);
+    const gaps = timestamps.slice(1).map((t, i) => (t - timestamps[i]) / (1000 * 60));
+    if (gaps.length === 0) {
+      categories[name] = { category, median: '', stddev: '' };
+      continue;
+    }
+
+    gaps.sort((a, b) => a - b);
+    const mid = Math.floor(gaps.length / 2);
+    const median = gaps.length % 2 === 0 ? (gaps[mid - 1] + gaps[mid]) / 2 : gaps[mid];
+
+    const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    const stddev = Math.sqrt(gaps.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / gaps.length);
+
+    categories[name] = {
+      category,
+      median: Math.round(median),
+      stddev: Math.round(stddev)
+    };
   }
   return categories;
 };
@@ -165,7 +184,9 @@ fs.createReadStream(INPUT_CSV)
     const categories = analyzeCategories();
     const finalResults = results.map(row => ({
       ...row,
-      category: categories[row.name]?.category || 'unclassified'
+      category: categories[row.name]?.category || 'unclassified',
+      median_minutes: categories[row.name]?.median || '',
+      stddev_minutes: categories[row.name]?.stddev || ''
     }));
 
     const headers = Object.keys(finalResults[0] || {}).map((key) => ({ id: key, title: key }));
